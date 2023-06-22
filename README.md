@@ -8,6 +8,7 @@ pipeline.
 NOTES
 - dont put any authentication details in here 
   - use some sort of keyring or gnupg system for maintaining auth details in system
+  - using .env acutally right now
 
 MAKING NEW PIPELINES:
 - name the pipeline
