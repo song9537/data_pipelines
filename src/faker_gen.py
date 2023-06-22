@@ -23,7 +23,7 @@ def create_single_dataframe(n: int = 100):
     }
 
     df = pd.DataFrame(df)
-    logging.info(f'Created fake dataframe for testing {df.head()}')
+    logging.info(f'Created fake dataframe for testing \n{df.head()}')
 
     return df
 
@@ -41,6 +41,6 @@ def create_multi_dataframe(n: int = 100, sub_df_names: list = None):
         "city": [fake.city() for _ in range(n*len(sub_df_names))],
     }
     df = pd.DataFrame(df)
-    logging.info(f'Created fake dataframe for testing {df.head()}')
+    logging.info(f'Created fake dataframe for testing \n{df.head()}')
     df.set_index('df_name', inplace=True)
     return df
