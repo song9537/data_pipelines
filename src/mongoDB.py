@@ -1,8 +1,9 @@
+import datetime
 import os
 import pandas as pd
 import logging
 
-from pymongo import MongoClient
+from pymongo import MongoClient, DESCENDING
 from pymongo.errors import ConnectionFailure, OperationFailure
 from dotenv import load_dotenv
 
@@ -19,7 +20,6 @@ NGROK_TCP_ADDR = os.getenv("NGROK_TCP_ADDR")
 
 def get_mongo_connection(
         endpoint: str,
-        endpoint_addr,
         username: str = MONGO_DB_USER,
         password: str = MONGO_DB_PASS):
     """
@@ -29,21 +29,20 @@ def get_mongo_connection(
     :param username: username to authenticate mongodb connection
     :param password: password to authenticate mongodb connection
     :param endpoint: end point to store of fetch data ['local' or 'ngrok']
-    :param endpoint_addr: address of remote endpoint, None for local
     :return:
     """
 
     if endpoint == 'local':
         mongo_uri = f'mongodb://{username}:{password}@localhost:27017/'
     elif endpoint == 'ngrok':
-        mongo_uri = f'mongodb://{username}:{password}@{endpoint_addr}'
+        mongo_uri = f'mongodb://{username}:{password}@{NGROK_TCP_ADDR}'
     else:
         mongo_uri = None
 
     try:
         client = MongoClient(mongo_uri)
         logging.info("MongoDB Client Connected")
-        mongo_test_ops(client=client)
+        # mongo_test_ops(client=client)
 
         return client
 
@@ -76,7 +75,7 @@ def mongo_test_ops(client):
     test_collection.find_one({"name": "Test"})
 
     # remove test doc so they dont pile up
-    test_collection.delete_one({"name": "Test"})
+    client.drop_database('test_database')
 
     logging.basicConfig(level=logging.INFO)
     logging.info("MongoDB Client Operable")
@@ -117,29 +116,49 @@ def mongodb_pandf(db_name: str, client: MongoClient, collection_name: str = None
 def pandf_mongodb(df: pd.DataFrame, db_name: str, collection_name: str, client: MongoClient):
     """
     push the pandas dataframe to mongodb
-    :param df: can be single or multi index
+    :param df: single index only, empty dataframes will be ignored
     :param db_name:
     :param collection_name:
     :param client:
     :return:
     """
 
-    db = client[db_name]
+    if not df.empty:
+        db = client[db_name]
 
-    # For a single-index DataFrame, push to the named collection
-    collection = db[collection_name]
-    records = df.to_dict('records')  # Convert dataframe to dict
-    collection.insert_many(records)  # Insert into collection
-
-    # possible later function for returning multiple collections as multi index dataframe
-    # else:
-    #     # For a multi-index DataFrame, push to the appropriate collections
-    #     for name, sub_df in df.groupby(level=0):
-    #         collection = db[name]
-    #         records = sub_df.droplevel(0).to_dict('records')  # Drop the collection level and convert to dict
-    #         collection.insert_many(records)  # Insert into collection
+        # For a single-index DataFrame, push to the named collection
+        collection = db[collection_name]
+        records = df.to_dict('records')  # Convert dataframe to dict
+        collection.insert_many(records)  # Insert into collection
 
     return
+
+
+def mongodb_latestdatetime(client,
+                           db_name: str,
+                           collection_name: str,
+                           date_col: str) -> datetime.datetime:
+
+    """
+    if a collection has a date type column , get the newest entry date as datetime.datetime
+    :param client: mongo client
+    :param db_name: database name
+    :param collection_name: collection name
+    :param date_col: column containing date type info in collection
+    :return:
+    """
+
+    db = client[db_name]
+    collection = db[collection_name]
+
+    try:
+        latest_dt = collection.find().sort(date_col, DESCENDING).limit(1)[0]
+        latest_dt = latest_dt[date_col]
+    except:
+        logging.info(f'No datetype information found in {db_name}:{collection_name}:{date_col}')
+        latest_dt = None
+
+    return latest_dt
 
 
 def test_mongo():
@@ -149,11 +168,12 @@ def test_mongo():
     """
 
     # test local con
-    client = get_mongo_connection(endpoint='local', endpoint_addr=None)
-    single_collction_extract_load(client=client)
+    # client = get_mongo_connection(endpoint='local', endpoint_addr=None)
+    # single_collction_extract_load(client=client)
 
     # test ngrok con specified
     client = get_mongo_connection(endpoint='ngrok', endpoint_addr=NGROK_TCP_ADDR)
+    # dt = mongodb_latestdatetime(client=client, db_name='coinma')
     single_collction_extract_load(client=client)
 
     return
