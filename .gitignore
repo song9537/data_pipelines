@@ -1,3 +1,3 @@
 
-src/.env
+../autoML_pipelines/.env
 src/coingecko.py

@@ -1,6 +1,7 @@
-# i dont think this works at all rn
+# this is trash and Im not using it rn
 import pandas as pd
 from pycoingecko import CoinGeckoAPI
+
 
 def coingeckoapi_df(coin, days, currency='cad'):
     """

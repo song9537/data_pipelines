@@ -1,13 +1,20 @@
+# functions for interfacing with MongoDB
 import datetime
 import os
-import pandas as pd
 import logging
+import gridfs
+import pickle
+
+import pandas as pd
+import datetime as dt
 
 from pymongo import MongoClient, DESCENDING
+from bson.objectid import ObjectId
+from typing import Literal
 from pymongo.errors import ConnectionFailure, OperationFailure
 from dotenv import load_dotenv
+from airflow.providers.mongo.hooks.mongo import MongoHook
 
-from faker_gen import create_single_dataframe, create_multi_dataframe
 
 logging.basicConfig(level=logging.INFO)  # set logging level, can change later if production si good
 
@@ -16,36 +23,53 @@ env_vars = load_dotenv()
 MONGO_DB_USER = os.getenv("MONGO_DB_USER")
 MONGO_DB_PASS = os.getenv("MONGO_DB_PASS")
 NGROK_TCP_ADDR = os.getenv("NGROK_TCP_ADDR")
+TAILSCALE_HOST_IP = os.getenv("TAILSCALE_HOST_IP")
+MODELLING_DB_NAME = os.getenv("MODELLING_DB_NAME")
 
 
 def get_mongo_connection(
         endpoint: str,
+        host: Literal["system", "apache-airflow"] = 'system',
         username: str = MONGO_DB_USER,
         password: str = MONGO_DB_PASS):
     """
-    connect to the mongo db using user and password authentication, runs a small test of
-    inserting, finding and deleting a test document to ensure operability
+    create a mongo connection/client
+    connect to the mongo db using user and password authentication through various endpoints
 
     :param username: username to authenticate mongodb connection
     :param password: password to authenticate mongodb connection
+    :param host: host system connecting to the mongodb, airflow has different methods of connecting
     :param endpoint: end point to store of fetch data ['local' or 'ngrok']
     :return:
     """
+    hosts = ["system", "apache-airflow"]
+    if host not in hosts:
+        raise AttributeError(f"host must be in: {hosts.__repr__()}")
 
     if endpoint == 'local':
         mongo_uri = f'mongodb://{username}:{password}@localhost:27017/'
+    elif endpoint == 'local-docker':
+        mongo_uri = f'mongodb://{username}:{password}@host.docker.internal:27017/'
     elif endpoint == 'ngrok':
         mongo_uri = f'mongodb://{username}:{password}@{NGROK_TCP_ADDR}'
+    elif endpoint == 'tailscale':
+        mongo_uri = f'mongodb://{username}:{password}@{TAILSCALE_HOST_IP}:27017'
     else:
         mongo_uri = None
 
     try:
-        client = MongoClient(mongo_uri)
-        logging.info("MongoDB Client Connected")
-        # mongo_test_ops(client=client)
+        if host == 'system':
+            client = MongoClient(mongo_uri)
+
+        elif host == 'apache-airflow':
+            hook = MongoHook(conn_id=endpoint)
+            client = hook.get_conn()
+
+        logging.info(f"Connected to MongoDB - {client.server_info()}")
 
         return client
 
+    # outline some basic exceptions
     except ConnectionFailure as e:
         print(f"Could not connect to MongoDB: {e}")
         return None
@@ -59,152 +83,364 @@ def get_mongo_connection(
         return None
 
 
-def mongo_test_ops(client):
+def pandf_mongodb(data: pd.DataFrame,
+                  db_name: str,
+                  collection_name: str,
+                  mongodb_client: MongoClient, ):
     """
-    test basic features of connection, ensures client can manipulate database
-    :param client:
-    :return:
-    """
-    db = client['test_database']  # Replace with your database name
-
-    # Insert a test document
-    test_collection = db['test_collection']
-    test_collection.insert_one({"name": "Test"})
-
-    # Try to find the test document
-    test_collection.find_one({"name": "Test"})
-
-    # remove test doc so they dont pile up
-    client.drop_database('test_database')
-
-    logging.basicConfig(level=logging.INFO)
-    logging.info("MongoDB Client Operable")
-
-    pass
-
-
-def mongodb_pandf(db_name: str, client: MongoClient, collection_name: str = None) -> pd.DataFrame:
-    """
-    get mongoDB data to pandas dataframe - using pandf to designate endpoint since other libs can
-    generate dataframe also
-
-    :param db_name: name of database requested
-    :param client: optional since we can default to the configured MongoDB
-    :param collection_name: name of collection if not entire db
+    Push a dataframe to the Mongo Database
+    All datasets of a given format should be included in a single database, delineated by collections
+    :param data: pandas dataframe to push to db single index only, empty dataframes will be ignored
+    :param db_name: string name of the database to push data into
+    :param collection_name: string name of the collection to push data into
+    :param mongodb_client: mongo client to connect to
     :return:
     """
 
-    db = client[db_name]
-
-    # if collection specified return collection as df, else return multi-indexed df with all collections
-    collection = db[collection_name]
-    df = pd.DataFrame(list(collection.find()))
-    logging.info(f"Loaded {collection_name} as Single Index DataFrame")
-
-    # possible later function for returning multiple collections as multi index dataframe
-    # else:
-    #     dfs = {}
-    #     for collection_name in db.list_collection_names():
-    #         collection = db[collection_name]
-    #         dfs[collection_name] = pd.DataFrame(list(collection.find()))
-    #         logging.info(f"Loaded {collection_name} into Multi Index DataFrame")
-    #     df = pd.concat(dfs, names=['Collection', 'Row ID'])
-
-    return df
-
-
-def pandf_mongodb(df: pd.DataFrame, db_name: str, collection_name: str, client: MongoClient):
-    """
-    push the pandas dataframe to mongodb
-    :param df: single index only, empty dataframes will be ignored
-    :param db_name:
-    :param collection_name:
-    :param client:
-    :return:
-    """
-
-    if not df.empty:
-        db = client[db_name]
+    if not data.empty:
+        # mongodb_client = get_mongo_connection(endpoint=endpoint)
+        db = mongodb_client[db_name]
 
         # For a single-index DataFrame, push to the named collection
         collection = db[collection_name]
-        records = df.to_dict('records')  # Convert dataframe to dict
+        records = data.to_dict('records')  # Convert dataframe to dict
         collection.insert_many(records)  # Insert into collection
+
+        logging.info(f"Loaded Dataframe into MongoDB:{db_name}:{collection_name}")
 
     return
 
 
-def mongodb_latestdatetime(client,
+def mongodb_pandf(db_name: str,
+                  mongodb_client: MongoClient,
+                  sort_by: str = 'field',
+                  sort_dir: int = DESCENDING,
+                  limit: int = -1,
+                  collection_name: str = None) -> pd.DataFrame:
+    """
+    Fetch data from Mongo Database as a pandas dataframe
+    get mongoDB data to pandas dataframe - using pandf to designate endpoint since other libs can
+    generate dataframe also
+
+    :param db_name: name of database requested
+    :param mongodb_client: mongo client to connect to
+    :param limit: limit the number of returned entries
+    :param sort_by: field to sort returned data by
+    :param sort_dir: [1: asc, -1: desc] direction to sort data given sort_by, does nothing if sort_by not included
+    :param collection_name: name of collection if not entire db
+    :return: data as pandas df from mongodb
+    """
+
+    # mongodb_client = get_mongo_connection(endpoint=endpoint)
+    db = mongodb_client[db_name]
+
+    # if collection specified return collection as df, else return multi-indexed df with all collections
+    collection = db[collection_name]
+
+    if limit == -1:
+        # get sorted and limited collection from mongo
+        df = pd.DataFrame(list(collection.find().sort(sort_by, sort_dir)))
+    else:
+        df = pd.DataFrame(list(collection.find().sort(sort_by, sort_dir).limit(limit)))
+
+    df = df.drop('_id', axis=1)  # drop the _id col constructed by mongo
+    # df = df.add_prefix(collection_name + "_")
+    # df = df.add_prefix(db_name + "_")
+
+    logging.info(f"Loaded MongoDB:{db_name}:{collection_name} as Single Index DataFrame")
+
+    return df
+
+
+def mongodb_latestdatetime(mongodb_client: MongoClient,
                            db_name: str,
                            collection_name: str,
                            date_col: str) -> datetime.datetime:
 
     """
-    if a collection has a date type column , get the newest entry date as datetime.datetime
-    :param client: mongo client
-    :param db_name: database name
-    :param collection_name: collection name
-    :param date_col: column containing date type info in collection
+    if a collection has a date type column , fetch the newest entry date as datetime.datetime object
+
+    :param mongodb_client: mongo endpoint to use
+    :param db_name: string database name
+    :param collection_name: string collection name
+    :param date_col: string column containing date type info in collection
     :return:
     """
-
-    db = client[db_name]
+    db = mongodb_client[db_name]
     collection = db[collection_name]
 
     try:
         latest_dt = collection.find().sort(date_col, DESCENDING).limit(1)[0]
         latest_dt = latest_dt[date_col]
+        logging.info(f'Latest datetype object from {db_name}.{collection_name}.{date_col}:{latest_dt.__str__()}')
     except:
-        logging.info(f'No datetype information found in {db_name}:{collection_name}:{date_col}')
+        logging.info(f'No datetype objects found in {db_name}:{collection_name}:{date_col}')
         latest_dt = None
 
     return latest_dt
 
 
-def test_mongo():
+def delete_top_n_entries(mongodb_client, db_name, collection_name, column_name, n, order=DESCENDING):
     """
-    test single and multi index dataframe loading and extracting for pandas pipelines
+    delete the first n entries given sort parameters
+    :param mongodb_client: mongo database endpoint to connect to
+    :param db_name: string database name to delete from
+    :param collection_name: string name of collection to delete from
+    :param column_name: string name of column to sort by
+    :param n: int number of records to delete
+    :param order:
     :return:
     """
 
-    # test local con
-    # client = get_mongo_connection(endpoint='local', endpoint_addr=None)
-    # single_collction_extract_load(client=client)
+    db = mongodb_client[db_name]
+    collection = db[collection_name]
 
-    # test ngrok con specified
-    client = get_mongo_connection(endpoint='ngrok', endpoint_addr=NGROK_TCP_ADDR)
-    # dt = mongodb_latestdatetime(client=client, db_name='coinma')
-    single_collction_extract_load(client=client)
+    # Fetch the top n entries
+    cursor = collection.find().sort(column_name, order).limit(n)
+
+    # Collect all the ids of the documents to delete
+    ids_to_delete = [document['_id'] for document in cursor]
+
+    # Delete the documents
+    result = collection.delete_many({'_id': {'$in': ids_to_delete}})
+
+    logging.info(f'Deleted {result.deleted_count} documents')
+
+
+def mongodb_dropdups(mongodb_client: MongoClient,
+                     db_name: str,
+                     collection_name: str,):
+    """
+    this isnt done dont use it - need to pull entire collection and use pandas index to delete duplicates
+    :param mongodb_client:
+    :param db_name:
+    :param collection_name:
+    :return:
+    """
+
+    db = mongodb_client[db_name]  # Replace 'mydatabase' with your database name.
+    collection = db[collection_name]  # Replace 'mycollection' with your collection name.
+
+    # Fetch one document and get its fields (excluding _id)
+    fields = collection.find_one({}, projection={"_id": False}).keys()
+
+    # Create a group_id dict to hold the fields
+    group_id = {field: "${}".format(field) for field in fields}
+
+    # Build the pipeline using the dynamic fields
+    pipeline = [
+        {"$group": {
+            "_id": group_id,
+            "dups": {"$addToSet": "$_id"},
+            "count": {"$sum": 1}
+        }},
+        {"$match": {
+            "count": {"$gt": 1}
+        }}
+    ]
+
+    # Aggregate using the pipeline
+    duplicates = collection.aggregate(pipeline, allowDiskUse=True)
+
+    # Iterate through the result and delete duplicates.
+    for doc in duplicates:
+        doc_id_list = doc['dups']
+        # We will keep the first document and delete all others
+        del doc_id_list[0]
+        for doc_id in doc_id_list:
+            collection.delete_one({'_id': ObjectId(doc_id)})
+            logging.info(f'Deleted {doc_id} documents')
 
     return
 
 
-def single_collction_extract_load(client):
+def mongodb_models(mongodb_client: MongoClient,
+                   source: str,
+                   target_lbl: str,
+                   sort_by: str = 'created_utc',
+                   sort_dir: int = DESCENDING):
+    """
+    store model and important attributes in mongo db by serializing model
+    :param source: system or library used to generate the model
+    :param endpoint: mongo endpoint to use
+    :param target_lbl: string label of model target
+    :param sort_by: document attribute to sort found mdoels by
+    :param sort_dir: direction to sort found entries
+    :return: list of models
+    """
+    models = []
+    # mongodb_client = get_mongo_connection(endpoint=endpoint)
+    db = mongodb_client[MODELLING_DB_NAME]
 
-    # test single dataframe capability
-    fake_singledf = create_single_dataframe()
+    # Use GridFS for retrieving the binary file
+    fs = gridfs.GridFS(db)
 
-    db_name = 'test_database'
-    collection_name = 'test_collection'
+    # Get the pickled model and unpickle it
+    if sort_by and sort_dir:
+        files = fs.find(
+            {'source': source,
+             'target_lbl': target_lbl}).sort(sort_by, sort_dir)
+    else:
+        files = fs.find(
+            {'source': source,
+             'target_lbl': target_lbl})
 
-    # load pandas dataframe to mongo
-    pandf_mongodb(
-        client=client,
-        df=fake_singledf,
-        db_name=db_name,
-        collection_name=collection_name
+    for file in files:
+        pickled_model = file.read()
+        model = pickle.loads(pickled_model)
+        models.append(model)
+    else:
+        print("No file with that name")
+
+    return models
+
+
+def model_mongodb(model,
+                  source: str,
+                  target_lbl: str,
+                  feature_lbls: list,
+                  upper_training_bound: dt.datetime,
+                  lower_training_bound: dt.datetime,
+                  mongodb_client: MongoClient,):
+    """
+    store model and important attributes in mongo db by serializing model
+    :param source: system or library used to generate the model
+    :param endpoint: mongo endpoint to use
+    :param target_lbl: string label of model target
+    :param feature_lbls: list of string labels of training features
+    :param upper_training_bound: upper date type bound of training features
+    :param lower_training_bound: lower date type bound of training features
+    :param model: serializable model to store
+    :return:
+    """
+    # mongodb_client = get_mongo_connection(endpoint=endpoint)
+    db = mongodb_client[MODELLING_DB_NAME]
+
+    # Use GridFS for storing the binary file
+    fs = gridfs.GridFS(db)
+
+    # Pickle the model and save it to GridFS
+    pickled_model = pickle.dumps(model)
+    fs.put(
+        pickled_model,
+        source=source,
+        created_utc=dt.datetime.timestamp(dt.datetime.now()),
+        target_lbl=target_lbl,
+        training_lbls=feature_lbls,
+        upper_traning_bound=upper_training_bound,
+        lower_training_bound=lower_training_bound
     )
-
-    # extract pandas dataframe from mongo
-    df = mongodb_pandf(
-        client=client,
-        db_name=db_name,
-        collection_name=collection_name
-    )
-
-    client.drop_database(db_name)  # drop the test db when finished
 
     return
+
+
+# some deprecated stuff
+# def mongo_test_ops(client):
+#     """
+#     test basic features of connection, ensures client can manipulate database
+#     :param client:
+#     :return:
+#     """
+#     db = client['test_database']  # Replace with your database name
+#
+#     # Insert a test document
+#     test_collection = db['test_collection']
+#     test_collection.insert_one({"name": "Test"})
+#
+#     # Try to find the test document
+#     test_collection.find_one({"name": "Test"})
+#
+#     # remove test doc so they dont pile up
+#     client.drop_database('test_database')
+#
+#     logging.basicConfig(level=logging.INFO)
+#     logging.info("MongoDB Client Operable")
+#
+#     pass
+
+# def featureset_mongodb(set_id: str,
+#                        endpoin: str,
+#                        features_df: pd.DataFrame,
+#                        date_col: str,
+#                        target_col: str,
+#                        selector: str=None):
+#     """
+#     store featureset information
+#     set_id is optional since th euser can either create featuresets and store them for
+#     later use, or have them stored by an automated selection system
+#     selector is intended as the system used to select features if present
+#     :param endpoint:
+#     :return:
+#     """
+#
+#     if not selector:
+#         selector = 'manual'
+#
+#     mongodb_client = get_mongo_connection(endpoint=endpoint)
+#     db = mongodb_client[MODELLING_DB_NAME]
+#
+#     # For a single-index DataFrame, push to the named collection
+#     collection = db[selector]
+#
+#     feature_lbls = features_df.columns.tolist()
+#     upper = features_df[date_col].max()
+#     lower = features_df[date_col].min()
+#
+#     record = {'features': feature_lbls,
+#               'upper_training_bound': upper,
+#               'lower_training_bound': lower,
+#               'target': target_col}
+#     collection.insert(record)  # Insert into collection
+#
+#     logging.info(f"Loaded featureset into MongoDB:{MODELLING_DB_NAME}:{selector} from: {selector}")
+
+
+# TODO write some actual tests at some point, put them somewhere in another file such
+# TODO that imports arent fucked
+# def test_mongo():
+#     """
+#     test single and multi index dataframe loading and extracting for pandas pipelines
+#     :return:
+#     """
+#
+#     # test local con
+#     # client = get_mongo_connection(endpoint='local', endpoint_addr=None)
+#     # single_collction_extract_load(client=client)
+#
+#     # test ngrok con specified
+#     client = get_mongo_connection(endpoint='ngrok')
+#     # dt = mongodb_latestdatetime(client=client, db_name='coinma')
+#     single_collction_extract_load(client=client)
+#
+#     return
+#
+#
+# def single_collction_extract_load(client):
+#
+#     # test single dataframe capability
+#     fake_singledf = create_single_dataframe()
+#
+#     db_name = 'test_database'
+#     collection_name = 'test_collection'
+#
+#     # load pandas dataframe to mongo
+#     pandf_mongodb(
+#         client=client,
+#         df=fake_singledf,
+#         db_name=db_name,
+#         collection_name=collection_name
+#     )
+#
+#     # extract pandas dataframe from mongo
+#     df = mongodb_pandf(
+#         client=client,
+#         db_name=db_name,
+#         collection_name=collection_name
+#     )
+#
+#     client.drop_database(db_name)  # drop the test db when finished
+#
+#     return
 
 
 if __name__ == '__main__':

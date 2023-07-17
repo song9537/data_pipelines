@@ -1,8 +1,13 @@
+matplotlib~=3.7.1
+python-dotenv~=1.0.0
+requests~=2.31.0
+pytz~=2023.3
 pandas~=2.0.2
 pymongo~=4.3.3
-python-dotenv~=1.0.0
 pycoingecko~=3.1.0
-cryptocmd~=0.6.1
 numpy~=1.24.3
 faker~=18.10.1
-requests~=2.31.0
+cryptocmd~=0.6.1
+pendulum~=2.1.2
+bitfinex_tencars
+apache-airflow-providers-mongo

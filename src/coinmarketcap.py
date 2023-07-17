@@ -1,16 +1,22 @@
+# this is also trash and Im not using it rn
+# might be useful for finding new coins
+# otherwise cant get the resolutions needed for good modelling without paying for the API
 import os
+import logging
+
 
 import pandas as pd
 import requests
 import datetime as dt
 from dotenv import load_dotenv
 from cryptocmd import CmcScraper
-
-from mongoDB import pandf_mongodb, mongodb_pandf, get_mongo_connection, mongodb_latestdatetime
+from coinmarketcapapi import CoinMarketCapAPI
 
 env = load_dotenv()
 COINMARKETCAP_API_KEY = os.getenv('COINMARKETCAP_API_KEY')
 COINMARKETCAP_DATABASE_NAME = os.getenv('COINMARKETCAP_DATABASE_NAME')
+
+logging.basicConfig(level=logging.INFO)  # set logging level, can change later if production si good
 
 
 def cmc_get_listed_coins() -> pd.DataFrame:
@@ -36,7 +42,26 @@ def cmc_get_listed_coins() -> pd.DataFrame:
     return df
 
 
-def histcmc_pandf(
+def cmclatest_pandf(coin_code: str,
+                    currency: str = 'USD') -> pd.DataFrame:
+    """
+    get the latest currency quote from coinmarketcap
+    :param coin_code: symbol from coinmarket cap crypto map endpoint
+    :param currency: supported string for currency from coinmarketcap
+    :return:
+    """
+
+    cmc = CoinMarketCapAPI(COINMARKETCAP_API_KEY)
+    rep = cmc.cryptocurrency_quotes_latest(symbol=coin_code, convert=currency)
+    data = rep.data[coin_code][0]['quote'][currency]
+    df = pd.DataFrame([data])
+
+    logging.info(f"Extracted {coin_code}:latest")
+
+    return df
+
+
+def cmchist_pandf(
         coin_code: str,
         start_date: dt.datetime = None,
         end_date: dt.datetime = None) -> pd.DataFrame:
@@ -71,88 +96,91 @@ def histcmc_pandf(
     return df
 
 
-def cmc_update_coin(
-        coin_code: str,
-        endpoint: str):
-    """
-    grab the latest entry from the collection if exists, get all newer info from cmc, push to endpoint
-    :param coin_code:
-    :param endpoint: storage endpoint
-    :return:
-    """
-
-    client = get_mongo_connection(endpoint=endpoint)
-
-    latest_dt = mongodb_latestdatetime(
-        client=client,
-        db_name=COINMARKETCAP_DATABASE_NAME,
-        collection_name=coin_code,
-        date_col='Date')
-
-    end_date = None
-    if latest_dt:
-        end_date = dt.datetime.today()
-
-    df = histcmc_pandf(coin_code=coin_code, start_date=latest_dt, end_date=end_date)
-    df = df[df['Date'] != latest_dt]
-
-    cmcpandf_mongodb(df=df, coin_code=coin_code, client=client)
-
-    return
-
-
-def mongodb_cmcpandf(
-        coin_code: str,
-        client) -> pd.DataFrame:
-    """
-    get a pandas dataframe with coinmarketcap data from a mongodb instance
-    :param coin_code: coin code available on coinmarketcap
-    :param client: mongodb client
-    :return:
-    """
-
-    df = mongodb_pandf(
-        client=client,
-        db_name=COINMARKETCAP_DATABASE_NAME,
-        collection_name=coin_code
-    )
-
-    # _id is an artifact of the mongodb system, in this instance where duplicate documents should not
-    # exist in the db, it should not be required
-    df.drop(['_id'], inplace=True, axis=1)
-
-    return df
-
-
-def cmcpandf_mongodb(
-        df: pd.DataFrame,
-        coin_code: str,
-        client):
-    """
-    push coinmarketcap pandas dataframe to a mongodb instance
-    :param df: dataframe to push
-    :param coin_code: coin code from coinmarketcap crypto map
-    :param client: mongodb client
-    :return:
-    """
-
-    pandf_mongodb(
-        df=df,
-        db_name=COINMARKETCAP_DATABASE_NAME,
-        collection_name=coin_code,
-        client=client
-    )
-
-    return
+# def cmc_update_coin(
+#         coin_code: str,
+#         endpoint):
+#     """
+#     grab the latest entry from the collection if exists, get all newer info from cmc, push to endpoint
+#     :param coin_code:
+#     :param endpoint: storage endpoint
+#     :param client: mongodb client
+#     :return:
+#     """
+#
+#     client = get_mongo_connection(endpoint=endpoint)
+#
+#     latest_dt = mongodb_latestdatetime(
+#         client=client,
+#         db_name=COINMARKETCAP_DATABASE_NAME,
+#         collection_name=coin_code,
+#         date_col='Date')
+#
+#     end_date = None
+#     if latest_dt:
+#         end_date = dt.datetime.today()
+#
+#     df = cmchist_pandf(coin_code=coin_code, start_date=latest_dt, end_date=end_date)
+#     df = df[df['Date'] != latest_dt]
+#
+#     cmcpandf_mongodb(df=df, coin_code=coin_code, client=client)
+#
+#     return
+#
+#
+# def mongodb_cmcpandf(
+#         coin_code: str,
+#         client) -> pd.DataFrame:
+#     """
+#     get a pandas dataframe with coinmarketcap data from a mongodb instance
+#     :param coin_code: coin code available on coinmarketcap
+#     :param client: mongodb client
+#     :return:
+#     """
+#
+#     df = mongodb_pandf(
+#         client=client,
+#         db_name=COINMARKETCAP_DATABASE_NAME,
+#         collection_name=coin_code
+#     )
+#
+#     # _id is an artifact of the mongodb system, in this instance where duplicate documents should not
+#     # exist in the db, it should not be required
+#     df.drop(['_id'], inplace=True, axis=1)
+#
+#     return df
+#
+#
+# def cmcpandf_mongodb(
+#         df: pd.DataFrame,
+#         coin_code: str,
+#         client):
+#     """
+#     push coinmarketcap pandas dataframe to a mongodb instance
+#     :param df: dataframe to push
+#     :param coin_code: coin code from coinmarketcap crypto map
+#     :param client: mongodb client
+#     :return:
+#     """
+#
+#     pandf_mongodb(
+#         df=df,
+#         db_name=COINMARKETCAP_DATABASE_NAME,
+#         collection_name=coin_code,
+#         client=client
+#     )
+#
+#     return
 
 
 def main():
 
-    df = cmc_get_listed_coins()
-    coin_symbol = df.loc[df['rank'] == 10]
-    coin_symbol = coin_symbol['symbol'].values[0]
+    # df = cmc_get_listed_coins()
+    # coin_symbol = df.loc[df['rank'] == 10]
+    # coin_symbol = coin_symbol['symbol'].values[0]
+    #
+    # cmc_update_coin(coin_code=coin_symbol, endpoint='local')
 
-    cmc_update_coin(coin_code=coin_symbol, endpoint='ngrok')
+    cmclatest_pandf(coin_code='BTC')
 
     print()
 
