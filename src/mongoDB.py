@@ -4,15 +4,14 @@ import os
 import logging
 import gridfs
 import pickle
-
 import pandas as pd
 import datetime as dt
 
-from pymongo import MongoClient, DESCENDING
+from dotenv import load_dotenv
 from bson.objectid import ObjectId
 from typing import Literal
+from pymongo import MongoClient, DESCENDING
 from pymongo.errors import ConnectionFailure, OperationFailure
-from dotenv import load_dotenv
 from airflow.providers.mongo.hooks.mongo import MongoHook
 
 
@@ -257,12 +256,14 @@ def mongodb_dropdups(mongodb_client: MongoClient,
 def mongodb_models(mongodb_client: MongoClient,
                    source: str,
                    target_lbl: str,
+                   db_name: str = MODELLING_DB_NAME,
                    sort_by: str = 'created_utc',
                    sort_dir: int = DESCENDING):
     """
     store model and important attributes in mongo db by serializing model
     :param source: system or library used to generate the model
-    :param endpoint: mongo endpoint to use
+    :param mongodb_client: mongo connection to use
+    :param db_name: string name of database containing models
     :param target_lbl: string label of model target
     :param sort_by: document attribute to sort found mdoels by
     :param sort_dir: direction to sort found entries
@@ -290,7 +291,7 @@ def mongodb_models(mongodb_client: MongoClient,
         model = pickle.loads(pickled_model)
         models.append(model)
     else:
-        print("No file with that name")
+        print(f"No model in {db_name}:{source} with target {target_lbl}")
 
     return models
 
