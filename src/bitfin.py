@@ -1,14 +1,19 @@
 # functions for extracting data from bitfinex API
 import datetime
-
 import bitfinex
 import requests
 import logging
 import pytz
 import time
+import os
+
 import pandas as pd
 import datetime as dt
 
+from dotenv import load_dotenv
+
+env = load_dotenv()
+BITFIN_DB_NAME = os.getenv('BITFIN_DB_NAME')
 
 logging.basicConfig(level=logging.INFO)  # log INFO statements to console
 
@@ -126,6 +131,17 @@ def bitfinbatch_pandf(pair_code: str,
                 df = df_new
 
     logging.info(f"Extracted {pair_code} from {df['time'].min().__str__()} -> {df['time'].max().__str__()}")
+
+    df = bitfinex_renamecols(df=df, pair_code=pair_code)
+
+    return df
+
+
+def bitfinex_renamecols(df: pd.DataFrame,
+                        pair_code: str,
+                        source: str = BITFIN_DB_NAME):
+    df = df.add_prefix(pair_code + "_")
+    df = df.add_prefix(source + "_")
 
     return df
 

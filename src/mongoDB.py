@@ -6,6 +6,7 @@ import gridfs
 import pickle
 import pandas as pd
 import datetime as dt
+import pathlib
 
 from dotenv import load_dotenv
 from bson.objectid import ObjectId
@@ -105,7 +106,34 @@ def pandf_mongodb(data: pd.DataFrame,
         records = data.to_dict('records')  # Convert dataframe to dict
         collection.insert_many(records)  # Insert into collection
 
-        logging.info(f"Loaded Dataframe into MongoDB:{db_name}:{collection_name}")
+        logging.info(f"Loaded {len(data)} Records into MongoDB:{db_name}:{collection_name}")
+
+    return
+
+
+def dict_mongodb(data: dict,
+                 db_name: str,
+                 collection_name: str,
+                 mongodb_client: MongoClient, ):
+    """
+    Push a dataframe to the Mongo Database
+    All datasets of a given format should be included in a single database, delineated by collections
+    :param data: pandas dataframe to push to db single index only, empty dataframes will be ignored
+    :param db_name: string name of the database to push data into
+    :param collection_name: string name of the collection to push data into
+    :param mongodb_client: mongo client to connect to
+    :return:
+    """
+
+    if data:
+        # mongodb_client = get_mongo_connection(endpoint=endpoint)
+        db = mongodb_client[db_name]
+
+        # For a single-index DataFrame, push to the named collection
+        collection = db[collection_name]
+        collection.insert_one(data)  # Insert into collection
+
+        logging.info(f"Loaded {len(data)} Records into MongoDB:{db_name}:{collection_name}")
 
     return
 
@@ -142,11 +170,60 @@ def mongodb_pandf(db_name: str,
     else:
         df = pd.DataFrame(list(collection.find().sort(sort_by, sort_dir).limit(limit)))
 
-    df = df.drop('_id', axis=1)  # drop the _id col constructed by mongo
-    # df = df.add_prefix(collection_name + "_")
-    # df = df.add_prefix(db_name + "_")
+    df = mongodb_generaltransform(df=df, db_name=db_name, collection_name=collection_name)
 
-    logging.info(f"Loaded MongoDB:{db_name}:{collection_name} as Single Index DataFrame")
+    logging.info(f"Loaded {len(df)} Records from MongoDB:{db_name}:{collection_name} as Single Index DataFrame")
+
+    return df
+
+
+def mongodb_parquet(db_name: str,
+                    path: pathlib.Path,
+                    mongodb_client: MongoClient,
+                    sort_by: str = 'field',
+                    sort_dir: int = DESCENDING,
+                    limit: int = -1,
+                    collection_name: str = None) -> pd.DataFrame:
+    """
+    Fetch data from Mongo Database as a pandas dataframe
+    get mongoDB data to parquet in FS
+
+    :param db_name: name of database requested
+    :param path: Path type object pointing to file destination
+    :param mongodb_client: mongo client to connect to
+    :param limit: limit the number of returned entries
+    :param sort_by: field to sort returned data by
+    :param sort_dir: [1: asc, -1: desc] direction to sort data given sort_by, does nothing if sort_by not included
+    :param collection_name: name of collection if not entire db
+    :return: data as pandas df from mongodb
+    """
+
+    df = mongodb_pandf(
+        db_name=db_name,
+        collection_name=collection_name,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        limit=limit,
+        mongodb_client=mongodb_client
+    )
+
+    df.to_parquet(path=path)
+
+    logging.info(f"Loaded MongoDB:{db_name}:{collection_name}:{df[0].size} Records as Parquet to: {path.__repr__()}")
+
+    return df
+
+
+def mongodb_generaltransform(df: pd.DataFrame,
+                             db_name: str,
+                             collection_name: str):
+    """
+    drop id column created by mongo
+    name df columns per the database and collection names
+    :return:
+    """
+
+    df = df.drop('_id', axis=1)  # drop the _id col constructed by mongo
 
     return df
 
@@ -205,6 +282,8 @@ def delete_top_n_entries(mongodb_client, db_name, collection_name, column_name, 
 
     logging.info(f'Deleted {result.deleted_count} documents')
 
+    return
+
 
 def mongodb_dropdups(mongodb_client: MongoClient,
                      db_name: str,
@@ -217,125 +296,109 @@ def mongodb_dropdups(mongodb_client: MongoClient,
     :return:
     """
 
-    db = mongodb_client[db_name]  # Replace 'mydatabase' with your database name.
-    collection = db[collection_name]  # Replace 'mycollection' with your collection name.
+    db = mongodb_client[db_name]
 
-    # Fetch one document and get its fields (excluding _id)
-    fields = collection.find_one({}, projection={"_id": False}).keys()
+    df = mongodb_pandf(
+        db_name=db_name,
+        collection_name=collection_name,
+        mongodb_client=mongodb_client
+    )
 
-    # Create a group_id dict to hold the fields
-    group_id = {field: "${}".format(field) for field in fields}
+    df.drop_duplicates(keep='first', inplace=True)
+    db.drop_collection(collection_name)
 
-    # Build the pipeline using the dynamic fields
-    pipeline = [
-        {"$group": {
-            "_id": group_id,
-            "dups": {"$addToSet": "$_id"},
-            "count": {"$sum": 1}
-        }},
-        {"$match": {
-            "count": {"$gt": 1}
-        }}
-    ]
-
-    # Aggregate using the pipeline
-    duplicates = collection.aggregate(pipeline, allowDiskUse=True)
-
-    # Iterate through the result and delete duplicates.
-    for doc in duplicates:
-        doc_id_list = doc['dups']
-        # We will keep the first document and delete all others
-        del doc_id_list[0]
-        for doc_id in doc_id_list:
-            collection.delete_one({'_id': ObjectId(doc_id)})
-            logging.info(f'Deleted {doc_id} documents')
-
-    return
-
-
-def mongodb_models(mongodb_client: MongoClient,
-                   source: str,
-                   target_lbl: str,
-                   db_name: str = MODELLING_DB_NAME,
-                   sort_by: str = 'created_utc',
-                   sort_dir: int = DESCENDING):
-    """
-    store model and important attributes in mongo db by serializing model
-    :param source: system or library used to generate the model
-    :param mongodb_client: mongo connection to use
-    :param db_name: string name of database containing models
-    :param target_lbl: string label of model target
-    :param sort_by: document attribute to sort found mdoels by
-    :param sort_dir: direction to sort found entries
-    :return: list of models
-    """
-    models = []
-    # mongodb_client = get_mongo_connection(endpoint=endpoint)
-    db = mongodb_client[MODELLING_DB_NAME]
-
-    # Use GridFS for retrieving the binary file
-    fs = gridfs.GridFS(db)
-
-    # Get the pickled model and unpickle it
-    if sort_by and sort_dir:
-        files = fs.find(
-            {'source': source,
-             'target_lbl': target_lbl}).sort(sort_by, sort_dir)
-    else:
-        files = fs.find(
-            {'source': source,
-             'target_lbl': target_lbl})
-
-    for file in files:
-        pickled_model = file.read()
-        model = pickle.loads(pickled_model)
-        models.append(model)
-    else:
-        print(f"No model in {db_name}:{source} with target {target_lbl}")
-
-    return models
-
-
-def model_mongodb(model,
-                  source: str,
-                  target_lbl: str,
-                  feature_lbls: list,
-                  upper_training_bound: dt.datetime,
-                  lower_training_bound: dt.datetime,
-                  mongodb_client: MongoClient,):
-    """
-    store model and important attributes in mongo db by serializing model
-    :param source: system or library used to generate the model
-    :param endpoint: mongo endpoint to use
-    :param target_lbl: string label of model target
-    :param feature_lbls: list of string labels of training features
-    :param upper_training_bound: upper date type bound of training features
-    :param lower_training_bound: lower date type bound of training features
-    :param model: serializable model to store
-    :return:
-    """
-    # mongodb_client = get_mongo_connection(endpoint=endpoint)
-    db = mongodb_client[MODELLING_DB_NAME]
-
-    # Use GridFS for storing the binary file
-    fs = gridfs.GridFS(db)
-
-    # Pickle the model and save it to GridFS
-    pickled_model = pickle.dumps(model)
-    fs.put(
-        pickled_model,
-        source=source,
-        created_utc=dt.datetime.timestamp(dt.datetime.now()),
-        target_lbl=target_lbl,
-        training_lbls=feature_lbls,
-        upper_traning_bound=upper_training_bound,
-        lower_training_bound=lower_training_bound
+    pandf_mongodb(
+        data=df,
+        db_name=db_name,
+        collection_name=collection_name,
+        mongodb_client=mongodb_client
     )
 
     return
 
 
 # some deprecated stuff
+# def mongodb_models(mongodb_client: MongoClient,
+#                    source: str,
+#                    target_lbl: str,
+#                    db_name: str = MODELLING_DB_NAME,
+#                    sort_by: str = 'created_utc',
+#                    sort_dir: int = DESCENDING):
+#     """
+#     store model and important attributes in mongo db by serializing model
+#     :param source: system or library used to generate the model
+#     :param mongodb_client: mongo connection to use
+#     :param db_name: string name of database containing models
+#     :param target_lbl: string label of model target
+#     :param sort_by: document attribute to sort found mdoels by
+#     :param sort_dir: direction to sort found entries
+#     :return: list of models
+#     """
+#     models = []
+#     db = mongodb_client[MODELLING_DB_NAME]
+#
+#     # Use GridFS for retrieving the binary file
+#     fs = gridfs.GridFS(db)
+#
+#     # Get the pickled model and unpickle it
+#     if sort_by and sort_dir:
+#         files = fs.find(
+#             {'source': source,
+#              'target_lbl': target_lbl}).sort(sort_by, sort_dir)
+#     else:
+#         files = fs.find(
+#             {'source': source,
+#              'target_lbl': target_lbl})
+#
+#     for file in files:
+#         pickled_model = file.read()
+#         model = pickle.loads(pickled_model)
+#         models.append(model)
+#     else:
+#         print(f"No model in {db_name}:{source} with target {target_lbl}")
+#
+#     return models
+#
+#
+# def model_mongodb(model,
+#                   source: str,
+#                   target_lbl: str,
+#                   feature_lbls: list,
+#                   upper_training_bound: dt.datetime,
+#                   lower_training_bound: dt.datetime,
+#                   mongodb_client: MongoClient,):
+#     """
+#     store model and important attributes in mongo db by serializing model
+#     :param source: system or library used to generate the model
+#     :param mongodb_client: mongo connection to use
+#     :param target_lbl: string label of model target
+#     :param feature_lbls: list of string labels of training features
+#     :param upper_training_bound: upper date type bound of training features
+#     :param lower_training_bound: lower date type bound of training features
+#     :param model: serializable model to store
+#     :return:
+#     """
+#
+#     db = mongodb_client[MODELLING_DB_NAME]
+#
+#     # Use GridFS for storing the binary file
+#     fs = gridfs.GridFS(db)
+#
+#     # Pickle the model and save it to GridFS
+#     pickled_model = pickle.dumps(model)
+#     fs.put(
+#         pickled_model,
+#         source=source,
+#         created_utc=dt.datetime.timestamp(dt.datetime.now()),
+#         target_lbl=target_lbl,
+#         training_lbls=feature_lbls,
+#         upper_traning_bound=upper_training_bound,
+#         lower_training_bound=lower_training_bound
+#     )
+#
+#     return
+
+
 # def mongo_test_ops(client):
 #     """
 #     test basic features of connection, ensures client can manipulate database
