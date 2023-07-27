@@ -2,14 +2,10 @@
 import datetime
 import os
 import logging
-import gridfs
-import pickle
 import pandas as pd
-import datetime as dt
 import pathlib
 
 from dotenv import load_dotenv
-from bson.objectid import ObjectId
 from typing import Literal
 from pymongo import MongoClient, DESCENDING
 from pymongo.errors import ConnectionFailure, OperationFailure

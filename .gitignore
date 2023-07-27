@@ -1,6 +1,8 @@
-
-../autoML_pipelines/.env
-src/coingecko.py
 *.pyc
+*.iml
+
+./.idea/
+./data_pipelines.egg-info
+
 ./src/coingecko.py
 ./src/coinmarketcap.py
