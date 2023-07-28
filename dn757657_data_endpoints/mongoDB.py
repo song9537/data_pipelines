@@ -227,7 +227,7 @@ def mongodb_generaltransform(df: pd.DataFrame,
 def mongodb_latestdatetime(mongodb_client: MongoClient,
                            db_name: str,
                            collection_name: str,
-                           date_col: str) -> datetime.datetime:
+                           time_col: str) -> datetime.datetime:
 
     """
     if a collection has a date type column , fetch the newest entry date as datetime.datetime object
@@ -242,11 +242,11 @@ def mongodb_latestdatetime(mongodb_client: MongoClient,
     collection = db[collection_name]
 
     try:
-        latest_dt = collection.find().sort(date_col, DESCENDING).limit(1)[0]
-        latest_dt = latest_dt[date_col]
-        logging.info(f'Latest datetype object from {db_name}.{collection_name}.{date_col}:{latest_dt.__str__()}')
+        latest_dt = collection.find().sort(time_col, DESCENDING).limit(1)[0]
+        latest_dt = latest_dt[time_col]
+        logging.info(f'Latest datetype object from {db_name}.{collection_name}.{time_col}:{latest_dt.__str__()}')
     except:
-        logging.info(f'No datetype objects found in {db_name}:{collection_name}:{date_col}')
+        logging.info(f'No datetype objects found in {db_name}:{collection_name}:{time_col}')
         latest_dt = None
 
     return latest_dt

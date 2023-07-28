@@ -2,6 +2,7 @@
 *.iml
 *.xml
 *.env
+./test.py
 
 .idea/
 build/

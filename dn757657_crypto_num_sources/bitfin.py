@@ -130,9 +130,10 @@ def bitfinbatch_pandf(pair_code: str,
             else:
                 df = df_new
 
-    logging.info(f"Extracted {pair_code} from {df['time'].min().__str__()} -> {df['time'].max().__str__()}")
+    logging.info(f"Extracted {len(df)} records of {pair_code} from {df['time'].min().__str__()} -> {df['time'].max().__str__()}")
 
-    df = bitfinex_renamecols(df=df, pair_code=pair_code)
+    if not df.empty:
+        df = bitfinex_renamecols(df=df, pair_code=pair_code)
 
     return df
 
