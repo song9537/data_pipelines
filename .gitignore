@@ -2,12 +2,14 @@
 *.iml
 *.xml
 
-./.idea/
-./build/
-./data_pipelines.egg-info
+.idea/
+build/
+data_pipelines.egg-info/
+dn757657_fin_news_sources/
 
 ./src/coingecko.py
 ./src/coinmarketcap.py
-src/coingecko.py
-src/coinmarketcap.py
-src/sa_rapidAPI.py
+dn757657_crypto_num_sources/coingecko.py
+dn757657_crypto_num_sources/coinmarketcap.py
+dn757657_fin_news_sources/sa_rapidAPI.py
+build/lib/src/__init__.py

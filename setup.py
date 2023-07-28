@@ -10,6 +10,6 @@ setup(
     author="dn757657",
     author_email="dn757657@dal.ca",
     install_requires=requirements,
-    package_dir={'': 'src'},
-    packages=find_packages(include=['src']),  # package = any folder with an __init__.py file
+    packages=find_packages(include=['dn757657_crypto_num_sources',
+                                    'dn757657_data_endpoints']),  # package = any folder with an __init__.py file
 )
