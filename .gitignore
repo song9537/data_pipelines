@@ -3,6 +3,7 @@
 *.xml
 *.env
 ./test.py
+test.py
 
 .idea/
 build/
