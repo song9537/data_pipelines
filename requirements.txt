@@ -1,14 +1,10 @@
-apache-airflow==2.6.3
+apache-airflow==2.6.2
 bitfinex_tencars==0.0.3
-coinmarketcapapi==0.5
-cryptocmd==0.6.3
 Faker==19.2.0
 numpy==1.25.1
 pandas==2.0.3
-pycoingecko==3.1.0
 pymongo==4.4.1
 python-dotenv==1.0.0
 pytz==2023.3
 Requests==2.31.0
 setuptools==68.0.0
-apache-airflow-providers-mongo==3.2.1

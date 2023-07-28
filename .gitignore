@@ -1,5 +1,6 @@
 *.pyc
 *.iml
+*.xml
 
 ./.idea/
 ./data_pipelines.egg-info
