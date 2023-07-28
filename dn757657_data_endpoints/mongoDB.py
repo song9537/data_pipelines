@@ -68,15 +68,15 @@ def get_mongo_connection(
     # outline some basic exceptions
     except ConnectionFailure as e:
         print(f"Could not connect to MongoDB: {e}")
-        return None
+        # return None
 
     except OperationFailure as e:
         print(f"An error occurred with MongoDB: {e}")
-        return None
+        # return None
 
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-        return None
+        # return None
 
 
 def pandf_mongodb(data: pd.DataFrame,
