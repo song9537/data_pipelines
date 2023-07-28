@@ -1,6 +1,7 @@
 *.pyc
 *.iml
 *.xml
+*.env
 
 .idea/
 build/
