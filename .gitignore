@@ -3,6 +3,7 @@
 *.xml
 
 ./.idea/
+./build/
 ./data_pipelines.egg-info
 
 ./src/coingecko.py
