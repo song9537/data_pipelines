@@ -141,6 +141,8 @@ def bitfinbatch_pandf(pair_code: str,
 def bitfinex_renamecols(df: pd.DataFrame,
                         pair_code: str,
                         source: str = BITFIN_DB_NAME):
+    logging.info(df.head())
+
     df = df.add_prefix(pair_code + "_")
     df = df.add_prefix(source + "_")
 
