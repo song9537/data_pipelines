@@ -8,3 +8,6 @@
 
 ./src/coingecko.py
 ./src/coinmarketcap.py
+src/coingecko.py
+src/coinmarketcap.py
+src/sa_rapidAPI.py
