@@ -10,5 +10,6 @@ setup(
     author="dn757657",
     author_email="dn757657@dal.ca",
     install_requires=requirements,
+    package_dir={'': 'src'},
     packages=find_packages(include=['src']),  # package = any folder with an __init__.py file
 )
