@@ -6,7 +6,7 @@ with open("./requirements.txt") as requirement_file:
 setup(
     name="data_pipelines",
     description="etl pipelines, various sources",
-    version="1.0.1",
+    version="1.0.2",
     author="dn757657",
     author_email="dn757657@dal.ca",
     install_requires=requirements,
