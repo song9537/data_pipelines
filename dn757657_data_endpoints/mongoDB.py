@@ -134,12 +134,74 @@ def dict_mongodb(data: dict,
     return
 
 
+def mongodb_bounded_pandf(
+        db_name: str,
+        bound_col: str,
+        mongodb_client: MongoClient,
+        collection_name: str = None,
+        upper_bound = None,
+        lower_bound = None) -> pd.DataFrame:
+    """
+    difficult to integrate bounds into the regular function so it is seperate fucntion
+    :param db_name:
+    :param bound_col:
+    :param mongodb_client:
+    :param collection_name:
+    :param upper_bound:
+    :param lower_bound:
+    :return:
+    """
+
+    # mongodb_client = get_mongo_connection(endpoint=endpoint)
+    db = mongodb_client[db_name]
+
+    # if collection specified return collection as df, else return multi-indexed df with all collections
+    collection = db[collection_name]
+
+    query = None
+    if lower_bound or upper_bound:
+        # check that bounds are appropriate
+        if upper_bound <= lower_bound:
+            raise ValueError(f"Upper bound must be greater than Lower bound.")
+
+        # Type checking that bounds are same type as existing data in cols
+        sample_record = collection.find_one()
+        if sample_record is None:
+            raise ValueError(f"No records in {db}.{collection}")
+
+        column_type = type(sample_record[bound_col])
+
+        if lower_bound is not None and not isinstance(lower_bound, column_type):
+            raise TypeError(f"lower_bound is of type {type(lower_bound).__name__}, but should be {column_type.__name__}")
+        if upper_bound is not None and not isinstance(upper_bound, column_type):
+            raise TypeError(f"upper_bound is of type {type(upper_bound).__name__}, but should be {column_type.__name__}")
+
+        # Query
+        query = {}
+        if lower_bound is not None:
+            query[bound_col] = {"$gte": lower_bound}
+        if upper_bound is not None:
+            if bound_col in query:
+                query[bound_col].update({"$lte": upper_bound})
+            else:
+                query[bound_col] = {"$lte": upper_bound}
+
+        records = collection.find(query)
+        # Convert to DataFrame
+        df = pd.DataFrame(list(records))
+
+        return df
+
+
 def mongodb_pandf(db_name: str,
                   mongodb_client: MongoClient,
                   sort_by: str = 'field',
                   sort_dir: int = DESCENDING,
                   limit: int = -1,
-                  collection_name: str = None) -> pd.DataFrame:
+                  collection_name: str = None,
+                  upper_bound = None,
+                  lower_bound = None,
+                  bounds_col: str =  None) -> pd.DataFrame:
     """
     Fetch data from Mongo Database as a pandas dataframe
     get mongoDB data to pandas dataframe - using pandf to designate endpoint since other libs can
@@ -160,13 +222,44 @@ def mongodb_pandf(db_name: str,
     # if collection specified return collection as df, else return multi-indexed df with all collections
     collection = db[collection_name]
 
+    # TODO bounding function needs refinement, more testing
+    query = None
+    if lower_bound or upper_bound:
+        # check that bounds are appropriate
+        if upper_bound and lower_bound:
+            if upper_bound <= lower_bound:
+                raise ValueError(f"Upper bound must be greater than Lower bound.")
+
+        # Type checking that bounds are same type as existing data in cols
+        sample_record = collection.find_one()
+        if sample_record is None:
+            raise ValueError(f"No records in {db}.{collection}")
+
+        column_type = type(sample_record[bounds_col])
+
+        if lower_bound is not None and not isinstance(lower_bound, column_type):
+            raise TypeError(f"lower_bound is of type {type(lower_bound).__name__}, but should be {column_type.__name__}")
+        if upper_bound is not None and not isinstance(upper_bound, column_type):
+            raise TypeError(f"upper_bound is of type {type(upper_bound).__name__}, but should be {column_type.__name__}")
+
+        # Query
+        query = {}
+        if lower_bound is not None:
+            query[bounds_col] = {"$gt": lower_bound}
+        if upper_bound is not None:
+            if bounds_col in query:
+                query[bounds_col].update({"$lte": upper_bound})
+            else:
+                query[bounds_col] = {"$lte": upper_bound}
+
     if limit == -1:
         # get sorted and limited collection from mongo
-        df = pd.DataFrame(list(collection.find().sort(sort_by, sort_dir)))
+        df = pd.DataFrame(list(collection.find(query).sort(sort_by, sort_dir)))
     else:
-        df = pd.DataFrame(list(collection.find().sort(sort_by, sort_dir).limit(limit)))
+        df = pd.DataFrame(list(collection.find(query).sort(sort_by, sort_dir).limit(limit)))
 
-    df = mongodb_generaltransform(df=df, db_name=db_name, collection_name=collection_name)
+    if not df.empty:
+        df = mongodb_generaltransform(df=df, db_name=db_name, collection_name=collection_name)
 
     logging.info(f"Loaded {len(df)} Records from MongoDB:{db_name}:{collection_name} as Single Index DataFrame")
 
