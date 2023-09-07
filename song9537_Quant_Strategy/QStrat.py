@@ -5,18 +5,65 @@ import pandas as pd
 # To measure the risk of shortfall, series of technical indicators are needed.
 # The goal is to create an algorithm that calculates risks simultaneously while investment strategy is taken place
 
+def Trade_Signal(predicted_price, purchase_price):
 
-def rsi(data, period):
+    """
+    Generates a trading signal based on the predicted price
+    Second, Monitors the price changes from real time data.
+    Third, if current price decreases and portfolio experience heavy loss, abort mission. If else, make money
 
-    # data is the price of the crypto and
-    # period is the interval over which the RSI is calculated
+    :param predicted_price:
+    :param purchase_price:
+    :return:
+    """
+    trade_signal = {}
 
-    delta = data.diff().dropna()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss return 100 - (100 / (1 + rs))
-    data['RSI'] = rsi(data['Close'],14) # Calculate the 14-day RSI
+    price_difference = predicted_price - purchase_price
+    relative_difference = price_difference / purchase_price
 
-def 
+    if relative_difference > 0.05:
+        return 1
+    elif -0.05 <= relative_difference <= 0.05:
+        return 0
+    else:
+        return -1
+
+def Perform_Trade(trade_signal):
+
+    """
+    Perform trade when a signal is triggered
+
+    :param trade_signal:
+    :return:
+    """
+
+    if trade_signal == 1:
+        print("Trigger API to Buy")
+    elif trade_signal == 0:
+        print("Trigger API to Hold")
+    elif trade_signal == -1:
+        print("Trigger API to Sell")
+    else:
+        print("Invalid Signal")
+
+def Assess_Risk(current_price, purchase_price):
+
+    """
+    Monitors the portfolio and generates a sell signal if needed.
+
+    Parameters:
+    - buy price:
+    - current_prices:
+
+    Returns:
+    """
+    trade_signal = {}
+
+
+    # Calculate the relative decrease in price
+    relative_decrease = (purchase_price - current_price) / purchase_price
+
+    if relative_decrease >= 0.10:
+        trade_signal = -1
+    else:
+        trade_signal = 1
